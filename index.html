@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: black;
+        }
+        iframe, video {
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="player-container" style="width:100%; height:100%;"></div>
+
+    <script>
+        let currentType = ''; // 'youtube', 'twitch', 'video', 'web', 'invidious'
+        let ytPlayer = null;
+        let twitchPlayer = null;
+        let videoElement = null;
+        let currentVolume = 0.5;
+        let currentVideoId = '';
+
+        // Load YouTube API
+        let tag = document.createElement('script');
+        tag.src = "https://www.youtube.com/iframe_api";
+        let firstScriptTag = document.getElementsByTagName('script')[0];
+        firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+
+        // Load Twitch API
+        let twitchTag = document.createElement('script');
+        twitchTag.src = "https://player.twitch.tv/js/embed/v1.js";
+        document.head.appendChild(twitchTag);
+
+        window.addEventListener('message', function(event) {
+            let data = event.data;
+            if (data.action === "play") {
+                playMedia(data.url, data.volume);
+            } else if (data.action === "setVolume") {
+                currentVolume = data.volume;
+                setVolume(data.volume);
+            }
+        });
+
+        function playMedia(url, volume) {
+            currentVolume = volume;
+            const container = document.getElementById('player-container');
+            container.innerHTML = ''; // Clear container
+
+            // Extract YouTube ID
+            let youtubeId = url.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+            // Extract Twitch Channel
+            let twitchChannel = url.match(/twitch\.tv\/([a-zA-Z0-9_-]+)/);
+            // Check direct video extension
+            let isDirectVideo = url.match(/\.(mp4|webm|ogg)$/i);
+
+            if (youtubeId) {
+                currentType = 'youtube';
+                let ytId = youtubeId[1];
+                let div = document.createElement('div');
+                div.id = 'yt-player';
+                container.appendChild(div);
+
+                if (window.YT && YT.Player) {
+                    initYouTube(ytId);
+                } else {
+                    window.onYouTubeIframeAPIReady = () => initYouTube(ytId);
+                }
+            } else if (twitchChannel) {
+                currentType = 'twitch';
+                let channel = twitchChannel[1];
+                let div = document.createElement('div');
+                div.id = 'twitch-player';
+                container.appendChild(div);
+
+                twitchPlayer = new Twitch.Player("twitch-player", {
+                    channel: channel,
+                    width: "100%",
+                    height: "100%",
+                    autoplay: true,
+                    muted: false
+                });
+                twitchPlayer.addEventListener(Twitch.Player.READY, () => {
+                    twitchPlayer.setVolume(currentVolume);
+                });
+            } else if (isDirectVideo) {
+                currentType = 'video';
+                videoElement = document.createElement('video');
+                videoElement.src = url;
+                videoElement.autoplay = true;
+                videoElement.loop = true;
+                videoElement.volume = currentVolume;
+                videoElement.controls = false;
+                container.appendChild(videoElement);
+            } else {
+                currentType = 'web';
+                let iframe = document.createElement('iframe');
+                iframe.src = url;
+                container.appendChild(iframe);
+            }
+        }
+
+        function initYouTube(videoId) {
+            currentVideoId = videoId;
+            ytPlayer = new YT.Player('yt-player', {
+                host: 'https://www.youtube-nocookie.com',
+                videoId: videoId,
+                playerVars: {
+                    'autoplay': 1,
+                    'controls': 0,
+                    'disablekb': 1,
+                    'fs': 0,
+                    'rel': 0,
+                    'showinfo': 0,
+                    'iv_load_policy': 3,
+                    'loop': 1,
+                    'playlist': videoId,
+                    'origin': 'https://www.youtube.com'
+                },
+                events: {
+                    'onReady': onPlayerReady,
+                    'onError': onPlayerError
+                }
+            });
+        }
+
+        function onPlayerReady(event) {
+            let iframe = event.target.getIframe();
+            if (iframe) {
+                // Set strict referrer policy to pass validation inside WebView
+                iframe.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin');
+            }
+            event.target.playVideo();
+            event.target.setVolume(currentVolume * 100);
+        }
+
+        function onPlayerError(event) {
+            if (event.data === 150 || event.data === 101 || event.data === 2) {
+                console.log("YouTube error " + event.data + " detected. Falling back to proxy stream...");
+                const container = document.getElementById('player-container');
+                container.innerHTML = ''; 
+
+                currentType = 'invidious';
+                let iframe = document.createElement('iframe');
+                iframe.src = "https://yewtu.be/embed/" + currentVideoId + "?autoplay=1&loop=1&playlist=" + currentVideoId + "&volume=" + Math.round(currentVolume * 100);
+                container.appendChild(iframe);
+            }
+        }
+
+        function setVolume(volume) {
+            if (currentType === 'youtube' && ytPlayer && ytPlayer.setVolume) {
+                ytPlayer.setVolume(volume * 100);
+            } else if (currentType === 'twitch' && twitchPlayer && twitchPlayer.setVolume) {
+                twitchPlayer.setVolume(volume);
+            } else if (currentType === 'video' && videoElement) {
+                videoElement.volume = volume;
+            } else if (currentType === 'invidious') {
+                if (volume === 0) {
+                    let iframe = document.querySelector('iframe');
+                    if (iframe) {
+                        iframe.src = "https://yewtu.be/embed/" + currentVideoId + "?autoplay=1&loop=1&playlist=" + currentVideoId + "&volume=0";
+                    }
+                }
+            }
+        }
+    </script>
+</body>
+</html>
